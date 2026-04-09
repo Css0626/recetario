@@ -435,7 +435,7 @@
                     `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/issues?state=all&labels=recetas-data&per_page=1`,
                     {
                         headers: {
-                            'Authorization': `token ${GITHUB_CONFIG.token}`,
+                            'Authorization': `Bearer ${GITHUB_CONFIG.token}`,
                             'Accept': 'application/vnd.github.v3+json'
                         }
                     }
@@ -455,7 +455,7 @@
                         {
                             method: 'PATCH',
                             headers: {
-                                'Authorization': `token ${GITHUB_CONFIG.token}`,
+                                'Authorization': `Bearer ${GITHUB_CONFIG.token}`,
                                 'Accept': 'application/vnd.github.v3+json',
                                 'Content-Type': 'application/json'
                             },
@@ -469,7 +469,7 @@
                         {
                             method: 'POST',
                             headers: {
-                                'Authorization': `token ${GITHUB_CONFIG.token}`,
+                                'Authorization': `Bearer ${GITHUB_CONFIG.token}`,
                                 'Accept': 'application/vnd.github.v3+json',
                                 'Content-Type': 'application/json'
                             },
@@ -507,7 +507,7 @@
                     `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/issues?state=all&labels=recetas-data&per_page=1`,
                     {
                         headers: {
-                            'Authorization': `token ${GITHUB_CONFIG.token}`,
+                            'Authorization': `Bearer ${GITHUB_CONFIG.token}`,
                             'Accept': 'application/vnd.github.v3+json'
                         }
                     }
@@ -522,15 +522,31 @@
                     
                     if (match && match[1]) {
                         const githubRecipes = JSON.parse(match[1]);
-                        if (JSON.stringify(githubRecipes) !== JSON.stringify(recipes)) {
-                            recipes = githubRecipes;
-                            localStorage.setItem('recipes', JSON.stringify(recipes));
-                            renderRecipes();
-                            showNotification('✅ Datos actualizados');
+
+                        // Merge inteligente: combinar recetas locales y de GitHub por ID
+                        // Las locales tienen prioridad si GitHub está vacío o tiene menos datos
+                        if (githubRecipes.length === 0 && recipes.length > 0) {
+                            // GitHub está vacío pero hay datos locales → subir locales
+                            await syncToGitHub();
+                        } else {
+                            // Merge: tomar todas las recetas únicas por ID, GitHub gana en conflicto
+                            const localMap = Object.fromEntries(recipes.map(r => [r.id, r]));
+                            const githubMap = Object.fromEntries(githubRecipes.map(r => [r.id, r]));
+                            const merged = Object.values({ ...localMap, ...githubMap });
+                            
+                            if (JSON.stringify(merged) !== JSON.stringify(recipes)) {
+                                recipes = merged;
+                                localStorage.setItem('recipes', JSON.stringify(recipes));
+                                renderRecipes();
+                                showNotification('✅ Datos sincronizados');
+                            }
                         }
                         localStorage.setItem('lastSync', new Date().toISOString());
                         updateSyncStatus();
                     }
+                } else if (recipes.length > 0) {
+                    // No hay issue en GitHub pero hay datos locales → crear el issue
+                    await syncToGitHub();
                 }
             } catch (error) {
                 console.error('Load error:', error);
