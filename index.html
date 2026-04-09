@@ -326,7 +326,7 @@
         let isOnline = navigator.onLine;
 
         // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             // Load config
             const savedRepo = localStorage.getItem('github_repo');
             if (savedRepo) {
@@ -335,10 +335,10 @@
                 GITHUB_CONFIG.repo = repo;
             }
             
-            // Load recipes from local
+            // Mostrar recetas locales inmediatamente como cache rapido
             const localData = localStorage.getItem('recipes');
             if (localData) {
-                recipes = JSON.parse(localData);
+                try { recipes = JSON.parse(localData); } catch(e) { recipes = []; }
                 renderRecipes();
             }
             
@@ -347,12 +347,15 @@
             updateSyncStatus();
             
             // Online monitoring
-            window.addEventListener('online', () => { isOnline = true; updateSyncStatus(); });
+            window.addEventListener('online', () => { isOnline = true; updateSyncStatus(); if (GITHUB_CONFIG.token) loadFromGitHub(); });
             window.addEventListener('offline', () => { isOnline = false; updateSyncStatus(); });
             
-            // Auto-sync if configured
-            if (GITHUB_CONFIG.token && isOnline) {
-                loadFromGitHub();
+            if (!GITHUB_CONFIG.token) {
+                // Sin GitHub: avisar que los datos se pueden perder en movil
+                showBanner('⚠️ Configurá GitHub (engranaje) para que tus recetas no se borren en el celular');
+            } else if (isOnline) {
+                // Con GitHub: cargar desde GitHub como fuente principal
+                await loadFromGitHub();
             }
         });
 
@@ -513,44 +516,47 @@
                     }
                 );
 
-                if (!response.ok) return;
+                if (!response.ok) {
+                    showNotification('❌ Error GitHub (' + response.status + ')');
+                    return;
+                }
                 const issues = await response.json();
                 
                 if (issues && issues.length > 0) {
-                    const body = issues[0].body;
+                    const body = issues[0].body || '';
                     const match = body.match(/<!-- RECETAS_DATA_START -->\n([\s\S]*?)\n<!-- RECETAS_DATA_END -->/);
                     
                     if (match && match[1]) {
                         const githubRecipes = JSON.parse(match[1]);
-
-                        // Merge inteligente: combinar recetas locales y de GitHub por ID
-                        // Las locales tienen prioridad si GitHub está vacío o tiene menos datos
+                        // GitHub es la fuente principal
                         if (githubRecipes.length === 0 && recipes.length > 0) {
-                            // GitHub está vacío pero hay datos locales → subir locales
                             await syncToGitHub();
                         } else {
-                            // Merge: tomar todas las recetas únicas por ID, GitHub gana en conflicto
-                            const localMap = Object.fromEntries(recipes.map(r => [r.id, r]));
-                            const githubMap = Object.fromEntries(githubRecipes.map(r => [r.id, r]));
-                            const merged = Object.values({ ...localMap, ...githubMap });
-                            
-                            if (JSON.stringify(merged) !== JSON.stringify(recipes)) {
-                                recipes = merged;
-                                localStorage.setItem('recipes', JSON.stringify(recipes));
-                                renderRecipes();
-                                showNotification('✅ Datos sincronizados');
-                            }
+                            recipes = githubRecipes;
+                            localStorage.setItem('recipes', JSON.stringify(recipes));
+                            renderRecipes();
                         }
                         localStorage.setItem('lastSync', new Date().toISOString());
                         updateSyncStatus();
                     }
                 } else if (recipes.length > 0) {
-                    // No hay issue en GitHub pero hay datos locales → crear el issue
+                    // No hay issue todavia: subir recetas locales
                     await syncToGitHub();
                 }
             } catch (error) {
                 console.error('Load error:', error);
+                showNotification('❌ Error al cargar desde GitHub');
             }
+        }
+
+        function showBanner(message) {
+            const existing = document.getElementById('warnBanner');
+            if (existing) return;
+            const banner = document.createElement('div');
+            banner.id = 'warnBanner';
+            banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:100;background:#f59e0b;color:#1c1917;padding:10px 16px;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px;';
+            banner.innerHTML = `<span>${message}</span><button onclick="this.parentElement.remove();openConfigModal();" style="background:#1c1917;color:white;border:none;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;flex-shrink:0;">Configurar</button>`;
+            document.body.appendChild(banner);
         }
 
         // Storage & Rendering
